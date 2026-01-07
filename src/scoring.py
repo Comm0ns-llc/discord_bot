@@ -8,7 +8,7 @@ import logging
 from dataclasses import dataclass
 from typing import NamedTuple
 
-from .config import config, SPECIAL_REACTION_EMOJIS
+from .config import config
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +91,6 @@ class ScoringEngine:
         Returns:
             float: リアクションの重み
         """
-        # 特別な絵文字かチェック
-        if emoji in SPECIAL_REACTION_EMOJIS:
-            return self.weights.REACTION_SPECIAL_WEIGHT
-        
-        # 通常のリアクション
         return self.weights.REACTION_BASE_WEIGHT
     
     def calculate_user_total_score(

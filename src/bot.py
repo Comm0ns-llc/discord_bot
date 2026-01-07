@@ -12,11 +12,13 @@ from discord import app_commands
 from discord.ext import commands
 
 from .config import config, validate_config, EmbedColors
-from .database import db, DatabaseError
+from .database import DatabaseError
+from .storage import storage
 from .scoring import scoring_engine
 
 if TYPE_CHECKING:
     from discord import Message
+    from discord import RawReactionActionEvent
 
 # ロギング設定
 logging.basicConfig(
@@ -36,9 +38,10 @@ class QualityBot(commands.Bot):
     def __init__(self) -> None:
         """Botを初期化"""
         intents = discord.Intents.default()
-        # Active Score（発言数=1pt）のみを扱うため、特権Intentsは不要
-        intents.message_content = False
-        intents.reactions = False
+        # メッセージ内容は使わないが、リアクション加点のためreactionsは必要
+        # on_message の受信・デバッグを安定させるため有効化（内容は保存しない）
+        intents.message_content = True
+        intents.reactions = True
         intents.members = False
         
         super().__init__(
@@ -90,8 +93,8 @@ async def on_message(message: Message) -> None:
     
     1. Botのメッセージは無視
     2. ユーザー情報をupsert
-    3. メッセージを保存（Active Scoreのみ）
-    4. ユーザースコアを +1 する
+    3. メッセージを保存（発言=3pt）
+    4. ユーザースコアを +3 する
     """
     # Botのメッセージは無視
     if message.author.bot:
@@ -102,8 +105,14 @@ async def on_message(message: Message) -> None:
         return
     
     try:
+        logger.info(
+            "on_message received: guild=%s channel=%s author=%s",
+            message.guild.id,
+            message.channel.id,
+            message.author.id,
+        )
         # ユーザー情報をupsert
-        await db.upsert_user(
+        await storage.upsert_user(
             user_id=message.author.id,
             username=str(message.author)
         )
@@ -114,7 +123,7 @@ async def on_message(message: Message) -> None:
         # Message Content Intentを使わないため、内容は保存しない（必要なら将来拡張）
         content: str | None = None
 
-        await db.insert_message(
+        await storage.insert_message(
             message_id=message.id,
             user_id=message.author.id,
             channel_id=message.channel.id,
@@ -126,7 +135,14 @@ async def on_message(message: Message) -> None:
         
         # 初期スコアをユーザーに加算
         initial_score = float(base_score)
-        await db.update_user_score(message.author.id, initial_score)
+        await storage.update_user_score(message.author.id, initial_score)
+
+        logger.info(
+            "score updated: author=%s +%s (message_id=%s)",
+            message.author.id,
+            initial_score,
+            message.id,
+        )
         
         logger.debug(f"Message processed: {message.id} from {message.author}")
         
@@ -137,6 +153,50 @@ async def on_message(message: Message) -> None:
     
     # コマンドの処理を継続
     await bot.process_commands(message)
+
+
+@bot.event
+async def on_raw_reaction_add(payload: RawReactionActionEvent) -> None:
+    """リアクション1つにつき1ptをメッセージ投稿者に加算"""
+    # Bot自身のリアクションは無視
+    if bot.user and payload.user_id == bot.user.id:
+        return
+
+    try:
+        message = await storage.get_message(payload.message_id)
+        if not message:
+            return
+
+        # 自分のメッセージへの自分のリアクションは無視
+        if int(message["user_id"]) == int(payload.user_id):
+            return
+
+        emoji_name = str(payload.emoji.name) if payload.emoji.name else str(payload.emoji)
+
+        exists = await storage.check_reaction_exists(
+            payload.message_id,
+            payload.user_id,
+            emoji_name,
+        )
+        if exists:
+            return
+
+        weight = float(scoring_engine.calculate_reaction_weight(emoji_name))
+
+        await storage.insert_reaction(
+            message_id=payload.message_id,
+            user_id=payload.user_id,
+            reaction_type=emoji_name,
+            weight=weight,
+        )
+
+        await storage.update_message_reaction_score(payload.message_id, weight)
+        await storage.update_user_score(int(message["user_id"]), weight)
+
+    except DatabaseError as e:
+        logger.error(f"Database error processing reaction: {e}")
+    except Exception as e:
+        logger.error(f"Error processing reaction: {e}")
 
 
  
@@ -159,7 +219,7 @@ async def rank_command(interaction: discord.Interaction) -> None:
         user_id = interaction.user.id
         
         # ユーザー情報を取得
-        user = await db.get_user(user_id)
+        user = await storage.get_user(user_id)
         if not user:
             embed = discord.Embed(
                 title="❌ データが見つかりません",
@@ -170,12 +230,12 @@ async def rank_command(interaction: discord.Interaction) -> None:
             return
         
         # 順位を取得
-        rank_info = await db.get_user_rank(user_id)
+        rank_info = await storage.get_user_rank(user_id)
         rank = rank_info[0] if rank_info else None
         total_users = rank_info[1] if rank_info else None
         
         # メッセージ統計を取得（Active Scoreのみ利用）
-        stats = await db.get_user_messages_stats(user_id)
+        stats = await storage.get_user_messages_stats(user_id)
         breakdown = scoring_engine.calculate_user_total_score(stats)
         
         # Embedを作成
@@ -193,10 +253,20 @@ async def rank_command(interaction: discord.Interaction) -> None:
                 inline=False
             )
         
-        # スコア（Active Scoreのみ）
+        # スコア（発言 + リアクション）
         embed.add_field(
             name="📝 スコア (発言数)",
             value=f"{breakdown.base_score:.1f}pt",
+            inline=True
+        )
+        embed.add_field(
+            name="⭐ スコア (リアクション)",
+            value=f"{breakdown.impact_score:.1f}pt",
+            inline=True
+        )
+        embed.add_field(
+            name="📈 合計スコア",
+            value=f"**{breakdown.total_score:.1f}pt**",
             inline=False
         )
         embed.add_field(
@@ -250,7 +320,7 @@ async def leaderboard_command(
     
     try:
         # リーダーボードを取得
-        leaderboard = await db.get_leaderboard(limit=10, weekly=weekly)
+        leaderboard = await storage.get_leaderboard(limit=10, weekly=weekly)
         
         if not leaderboard:
             embed = discord.Embed(
@@ -285,7 +355,7 @@ async def leaderboard_command(
         embed.description = "\n".join(entries)
         
         # 自分の順位を追加
-        rank_info = await db.get_user_rank(interaction.user.id)
+        rank_info = await storage.get_user_rank(interaction.user.id)
         if rank_info:
             rank, total = rank_info
             if rank > 10:

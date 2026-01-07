@@ -1,13 +1,19 @@
 # Discord Quality Scoring Bot
 
 Discordコミュニティの質の高い発言を評価し、ランキング化するBotです。
-- **Active Score**: 発言1つにつき1ptでスコア化
-- **リアルタイム更新**: メッセージ送信時に即時スコア反映
-- **複合スコアリング**: 発言数、品質、会話誘発、リアクションの4指標
+
+## 特徴
+
+- **発言スコア**: 発言1つにつき3pt
+- **リアクションスコア**: 発言に対してリアクション1つにつき1pt
 - **リアルタイム更新**: メッセージ送信・リアクション追加時に即時スコア反映
-- **コスト最適化**: 短いメッセージはAPI呼び出しをスキップ
 
 ## スコアリングシステム
+
+| 指標 | 説明 | ポイント |
+|------|------|----------|
+| Message | 発言1つにつき | 3pt |
+| Reaction | 発言に対してリアクション1つにつき | 1pt |
 
 ## セットアップ
 
@@ -27,9 +33,22 @@ cp .env.example .env
 
 必要な値:
 - `DISCORD_BOT_TOKEN`: Discord Botのトークン
-- `SUPABASE_URL`: SupabaseプロジェクトのURL
-- `SUPABASE_KEY`: Supabaseのサービスロールキー
 - `DISCORD_APPLICATION_ID`: Discord Application ID（スラッシュコマンド用・推奨）
+
+#### とりあえず動かす（DBなし / memoryモード）
+
+`.env` に最低限これだけ入っていれば起動できます。
+
+- `DISCORD_BOT_TOKEN`
+- `STORAGE_BACKEND=memory`（デフォルトはmemory）
+
+#### Supabaseに保存する（supabaseモード）
+
+永続化してランキングを保持したい場合は、以下も設定してください。
+
+- `STORAGE_BACKEND=supabase`
+- `SUPABASE_URL`
+- `SUPABASE_KEY`
 
 ### 3. データベースのセットアップ
 

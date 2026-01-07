@@ -40,7 +40,7 @@ class ScoringWeights:
     """スコアリングの重み付け定数"""
     
     # Active Score (基本点)
-    BASE_SCORE_PER_MESSAGE: float = 1.0
+    BASE_SCORE_PER_MESSAGE: float = 3.0
     
     # NLP Context Score Multipliers
     NLP_MULTIPLIER_SPAM: float = 0.1       # スパム/短文
@@ -57,8 +57,8 @@ class ScoringWeights:
     REPLY_SCORE_MULTIPLIER: float = 5.0    # リプライ1件につき
     
     # Impact Score (リアクション)
-    REACTION_BASE_WEIGHT: float = 2.0      # 通常リアクション
-    REACTION_SPECIAL_WEIGHT: float = 5.0   # 特定の絵文字
+    REACTION_BASE_WEIGHT: float = 1.0      # リアクション1つにつき
+    REACTION_SPECIAL_WEIGHT: float = 1.0   # 特別扱いしない（互換のため残す）
 
 
 # 特別なリアクション絵文字（高い重み付け）
@@ -80,6 +80,7 @@ class BotConfig:
     supabase: SupabaseConfig = field(default_factory=SupabaseConfig)
     openai: OpenAIConfig = field(default_factory=OpenAIConfig)
     scoring: ScoringWeights = field(default_factory=ScoringWeights)
+    storage_backend: str = field(default_factory=lambda: os.getenv("STORAGE_BACKEND", "memory"))
     debug_mode: bool = field(
         default_factory=lambda: os.getenv("DEBUG_MODE", "false").lower() == "true"
     )
@@ -100,12 +101,14 @@ def validate_config() -> list[str]:
     
     if not config.discord.bot_token:
         errors.append("DISCORD_BOT_TOKEN is not set")
-    
-    if not config.supabase.url:
-        errors.append("SUPABASE_URL is not set")
-    
-    if not config.supabase.key:
-        errors.append("SUPABASE_KEY is not set")
+
+    backend = (config.storage_backend or "memory").strip().lower()
+    if backend == "supabase":
+        if not config.supabase.url:
+            errors.append("SUPABASE_URL is not set")
+
+        if not config.supabase.key:
+            errors.append("SUPABASE_KEY is not set")
     
     return errors
 
