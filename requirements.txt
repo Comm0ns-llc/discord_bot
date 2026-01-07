@@ -1,0 +1,20 @@
+# Discord Bot Dependencies
+# Python 3.11+ required
+
+# Discord
+discord.py>=2.3.2
+
+# Supabase (PostgreSQL)
+supabase>=2.0.0
+
+# OpenAI API
+openai>=1.0.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Async HTTP client
+aiohttp>=3.9.0
+
+# Type checking (development)
+mypy>=1.8.0
