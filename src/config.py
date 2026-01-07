@@ -107,9 +107,6 @@ def validate_config() -> list[str]:
     if not config.supabase.key:
         errors.append("SUPABASE_KEY is not set")
     
-    if not config.openai.api_key:
-        errors.append("OPENAI_API_KEY is not set")
-    
     return errors
 
 

@@ -4,7 +4,6 @@ Discord Bot Main Module
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -14,11 +13,10 @@ from discord.ext import commands
 
 from .config import config, validate_config, EmbedColors
 from .database import db, DatabaseError
-from .nlp_analyzer import nlp_analyzer
-from .scoring import scoring_engine, MessageScoreInput
+from .scoring import scoring_engine
 
 if TYPE_CHECKING:
-    from discord import Message, RawReactionActionEvent
+    from discord import Message
 
 # ロギング設定
 logging.basicConfig(
@@ -38,19 +36,16 @@ class QualityBot(commands.Bot):
     def __init__(self) -> None:
         """Botを初期化"""
         intents = discord.Intents.default()
-        intents.message_content = True  # メッセージ内容を取得するために必要
-        intents.reactions = True        # リアクションイベントを取得
-        intents.members = True          # メンバー情報を取得
+        # Active Score（発言数=1pt）のみを扱うため、特権Intentsは不要
+        intents.message_content = False
+        intents.reactions = False
+        intents.members = False
         
         super().__init__(
             command_prefix="!",  # スラッシュコマンドを主に使用
             intents=intents,
             application_id=config.discord.application_id or None
         )
-        
-        # 非同期タスクのキュー
-        self._nlp_task_queue: asyncio.Queue[tuple[int, str, int]] = asyncio.Queue()
-        self._nlp_worker_task: asyncio.Task | None = None
     
     async def setup_hook(self) -> None:
         """Bot起動時の初期化処理"""
@@ -59,10 +54,6 @@ class QualityBot(commands.Bot):
         # スラッシュコマンドを同期
         await self.tree.sync()
         logger.info("Slash commands synced")
-        
-        # NLP分析ワーカーを開始
-        self._nlp_worker_task = asyncio.create_task(self._nlp_worker())
-        logger.info("NLP worker started")
     
     async def on_ready(self) -> None:
         """Bot準備完了時のイベント"""
@@ -78,64 +69,9 @@ class QualityBot(commands.Bot):
             )
         )
     
-    async def _nlp_worker(self) -> None:
-        """
-        NLP分析をバックグラウンドで処理するワーカー
-        
-        メインスレッドをブロックしないように、
-        NLP分析を別タスクで実行
-        """
-        logger.info("NLP worker started")
-        
-        while True:
-            try:
-                # キューからタスクを取得
-                message_id, content, user_id = await self._nlp_task_queue.get()
-                
-                try:
-                    # NLP分析を実行
-                    multiplier = await nlp_analyzer.analyze(content)
-                    logger.debug(f"NLP analysis completed: message={message_id}, multiplier={multiplier}")
-                    
-                    # データベースを更新
-                    message = await db.update_message_nlp_score(message_id, multiplier)
-                    
-                    if message:
-                        # スコア差分を計算してユーザースコアを更新
-                        old_score = float(config.scoring.BASE_SCORE_PER_MESSAGE)  # 初期スコア
-                        new_score = float(message["total_score"])
-                        score_delta = new_score - old_score
-                        
-                        if score_delta != 0:
-                            await db.update_user_score(user_id, score_delta)
-                            logger.debug(f"User score updated: user={user_id}, delta={score_delta}")
-                    
-                except DatabaseError as e:
-                    logger.error(f"Database error in NLP worker: {e}")
-                except Exception as e:
-                    logger.error(f"Error in NLP worker: {e}")
-                finally:
-                    self._nlp_task_queue.task_done()
-                    
-            except asyncio.CancelledError:
-                logger.info("NLP worker cancelled")
-                break
-            except Exception as e:
-                logger.error(f"Unexpected error in NLP worker: {e}")
-                await asyncio.sleep(1)  # エラー時は少し待つ
-    
     async def close(self) -> None:
         """Bot終了時のクリーンアップ"""
         logger.info("Shutting down bot...")
-        
-        # NLPワーカーを停止
-        if self._nlp_worker_task:
-            self._nlp_worker_task.cancel()
-            try:
-                await self._nlp_worker_task
-            except asyncio.CancelledError:
-                pass
-        
         await super().close()
 
 
@@ -154,9 +90,8 @@ async def on_message(message: Message) -> None:
     
     1. Botのメッセージは無視
     2. ユーザー情報をupsert
-    3. メッセージを保存（初期スコアで）
-    4. NLP分析をキューに追加（バックグラウンド処理）
-    5. リプライの場合は親メッセージのリプライカウントを更新
+    3. メッセージを保存（Active Scoreのみ）
+    4. ユーザースコアを +1 する
     """
     # Botのメッセージは無視
     if message.author.bot:
@@ -174,42 +109,24 @@ async def on_message(message: Message) -> None:
         )
         
         # メッセージを保存（初期スコア）
-        initial_multiplier = 1.0
         base_score = config.scoring.BASE_SCORE_PER_MESSAGE
-        
+
+        # Message Content Intentを使わないため、内容は保存しない（必要なら将来拡張）
+        content: str | None = None
+
         await db.insert_message(
             message_id=message.id,
             user_id=message.author.id,
             channel_id=message.channel.id,
             guild_id=message.guild.id,
-            content=message.content,
-            nlp_score_multiplier=initial_multiplier,
+            content=content,
+            nlp_score_multiplier=1.0,
             base_score=base_score
         )
         
         # 初期スコアをユーザーに加算
-        initial_score = base_score * initial_multiplier
+        initial_score = float(base_score)
         await db.update_user_score(message.author.id, initial_score)
-        
-        # NLP分析をキューに追加（バックグラウンドで処理）
-        if message.content:  # 空のメッセージ（画像のみなど）は分析しない
-            await bot._nlp_task_queue.put((
-                message.id,
-                message.content,
-                message.author.id
-            ))
-        
-        # リプライの場合、親メッセージのリプライカウントを更新
-        if message.reference and message.reference.message_id:
-            parent_message = await db.get_message(message.reference.message_id)
-            if parent_message:
-                updated_message = await db.increment_reply_count(message.reference.message_id)
-                
-                if updated_message:
-                    # 親メッセージの投稿者のスコアを更新
-                    reply_score = config.scoring.REPLY_SCORE_MULTIPLIER
-                    await db.update_user_score(parent_message["user_id"], reply_score)
-                    logger.debug(f"Reply count updated for message {message.reference.message_id}")
         
         logger.debug(f"Message processed: {message.id} from {message.author}")
         
@@ -222,69 +139,7 @@ async def on_message(message: Message) -> None:
     await bot.process_commands(message)
 
 
-@bot.event
-async def on_raw_reaction_add(payload: RawReactionActionEvent) -> None:
-    """
-    リアクション追加時のイベントハンドラー
-    
-    1. Botのリアクションは無視
-    2. 自分自身へのリアクションは無視
-    3. リアクションを保存
-    4. メッセージのリアクションスコアを更新
-    5. メッセージ投稿者のスコアを更新
-    """
-    # Botのリアクションは無視
-    if payload.member and payload.member.bot:
-        return
-    
-    try:
-        # メッセージを取得
-        message = await db.get_message(payload.message_id)
-        if not message:
-            # DBにないメッセージ（Bot起動前のメッセージなど）は無視
-            return
-        
-        # 自分自身へのリアクションは無視
-        if message["user_id"] == payload.user_id:
-            return
-        
-        # 絵文字の名前を取得
-        emoji_name = str(payload.emoji.name) if payload.emoji.name else str(payload.emoji)
-        
-        # 既に同じリアクションが存在するかチェック
-        exists = await db.check_reaction_exists(
-            payload.message_id,
-            payload.user_id,
-            emoji_name
-        )
-        
-        if exists:
-            logger.debug(f"Reaction already exists: {emoji_name} on {payload.message_id}")
-            return
-        
-        # リアクションの重みを計算
-        weight = scoring_engine.calculate_reaction_weight(emoji_name)
-        
-        # リアクションを保存
-        await db.insert_reaction(
-            message_id=payload.message_id,
-            user_id=payload.user_id,
-            reaction_type=emoji_name,
-            weight=weight
-        )
-        
-        # メッセージのリアクションスコアを更新
-        await db.update_message_reaction_score(payload.message_id, weight)
-        
-        # メッセージ投稿者のスコアを更新
-        await db.update_user_score(message["user_id"], weight)
-        
-        logger.debug(f"Reaction processed: {emoji_name} on {payload.message_id}, weight={weight}")
-        
-    except DatabaseError as e:
-        logger.error(f"Database error processing reaction: {e}")
-    except Exception as e:
-        logger.error(f"Error processing reaction: {e}")
+ 
 
 
 # ============================================
@@ -319,10 +174,8 @@ async def rank_command(interaction: discord.Interaction) -> None:
         rank = rank_info[0] if rank_info else None
         total_users = rank_info[1] if rank_info else None
         
-        # メッセージ統計を取得
+        # メッセージ統計を取得（Active Scoreのみ利用）
         stats = await db.get_user_messages_stats(user_id)
-        
-        # スコア内訳を計算
         breakdown = scoring_engine.calculate_user_total_score(stats)
         
         # Embedを作成
@@ -340,31 +193,11 @@ async def rank_command(interaction: discord.Interaction) -> None:
                 inline=False
             )
         
-        # スコア内訳
+        # スコア（Active Scoreのみ）
         embed.add_field(
-            name="📝 基本点 (発言数)",
+            name="📝 スコア (発言数)",
             value=f"{breakdown.base_score:.1f}pt",
-            inline=True
-        )
-        embed.add_field(
-            name="🧠 NLP調整後",
-            value=f"{breakdown.nlp_adjusted_score:.1f}pt",
-            inline=True
-        )
-        embed.add_field(
-            name="💬 会話誘発",
-            value=f"{breakdown.conversation_score:.1f}pt",
-            inline=True
-        )
-        embed.add_field(
-            name="⭐ リアクション",
-            value=f"{breakdown.impact_score:.1f}pt",
-            inline=True
-        )
-        embed.add_field(
-            name="📈 合計スコア",
-            value=f"**{breakdown.total_score:.1f}pt**",
-            inline=True
+            inline=False
         )
         embed.add_field(
             name="📅 週間スコア",
