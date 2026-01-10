@@ -15,6 +15,7 @@ from .config import config, validate_config, EmbedColors
 from .database import DatabaseError
 from .storage import storage
 from .scoring import scoring_engine
+from .nlp_analyzer import nlp_analyzer
 
 if TYPE_CHECKING:
     from discord import Message
@@ -42,10 +43,10 @@ class QualityBot(commands.Bot):
         # on_message の受信・デバッグを安定させるため有効化（内容は保存しない）
         intents.message_content = True
         intents.reactions = True
-        intents.members = False
+        intents.members = True # Ensure members intent is also on
         
         super().__init__(
-            command_prefix="!",  # スラッシュコマンドを主に使用
+            "!", # command_prefix (positional)
             intents=intents,
             application_id=config.discord.application_id or None
         )
@@ -55,14 +56,22 @@ class QualityBot(commands.Bot):
         logger.info("Setting up bot...")
         
         # スラッシュコマンドを同期
-        await self.tree.sync()
-        logger.info("Slash commands synced")
+        if config.discord.guild_id:
+            guild = discord.Object(id=int(config.discord.guild_id))
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            logger.info(f"Slash commands synced to specific guild: {config.discord.guild_id}")
+        else:
+            await self.tree.sync()
+            logger.info("Slash commands synced globally")
     
     async def on_ready(self) -> None:
         """Bot準備完了時のイベント"""
         if self.user:
             logger.info(f"Logged in as {self.user.name} (ID: {self.user.id})")
         logger.info(f"Connected to {len(self.guilds)} guild(s)")
+        logger.info(f"Discord.py Version: {discord.__version__}")
+        logger.info(f"Intents: message_content={self.intents.message_content}, members={self.intents.members}, presences={self.intents.presences}")
         
         # ステータスを設定
         await self.change_presence(
@@ -77,129 +86,123 @@ class QualityBot(commands.Bot):
         logger.info("Shutting down bot...")
         await super().close()
 
+    async def on_message(self, message: Message) -> None:
+        """
+        メッセージ受信時のイベントハンドラー
+        
+        1. Botのメッセージは無視
+        2. ユーザー情報をupsert
+        3. メッセージを保存（発言=3pt）
+        4. ユーザースコアを +3 する
+        """
+        # Botのメッセージは無視
+        if message.author.bot:
+            return
+        
+        # DMは無視（サーバーのみ対象）
+        if not message.guild:
+            return
+        
+        try:
+            logger.info(
+                "on_message received: guild=%s channel=%s author=%s",
+                message.guild.id,
+                message.channel.id,
+                message.author.id,
+            )
+            # ユーザー情報をupsert
+            await storage.upsert_user(
+                user_id=message.author.id,
+                username=str(message.author)
+            )
+            
+            # NLP分析を実行
+            # Message Content Intentが必要だが、内容自体は保存しない（分析にのみ使用）
+            nlp_multiplier = await nlp_analyzer.analyze(message.content)
+
+            # メッセージを保存（初期スコア）
+            base_score = config.scoring.BASE_SCORE_PER_MESSAGE
+
+            # Message Content Intentを使わないため、内容は保存しない（必要なら将来拡張）
+            content: str | None = None
+
+            message_record = await storage.insert_message(
+                message_id=message.id,
+                user_id=message.author.id,
+                channel_id=message.channel.id,
+                guild_id=message.guild.id,
+                content=content,
+                nlp_score_multiplier=nlp_multiplier,
+                base_score=base_score
+            )
+            
+            if message_record:
+                # 計算された合計スコアをユーザーに加算
+                initial_score = float(message_record["total_score"])
+                await storage.update_user_score(message.author.id, initial_score)
+
+                logger.info(
+                    "score updated: author=%s +%s (multiplier=%.1f)",
+                    message.author.id,
+                    initial_score,
+                    nlp_multiplier,
+                )
+            
+            logger.debug(f"Message processed: {message.id} from {message.author}")
+            
+        except DatabaseError as e:
+            logger.error(f"Database error processing message: {e}")
+        except Exception as e:
+            logger.error(f"Error processing message: {e}")
+        
+        # コマンドの処理を継続
+        await self.process_commands(message)
+
+    async def on_raw_reaction_add(self, payload: RawReactionActionEvent) -> None:
+        """リアクション1つにつき1ptをメッセージ投稿者に加算"""
+        # Bot自身のリアクションは無視
+        if self.user and payload.user_id == self.user.id:
+            return
+
+        try:
+            message = await storage.get_message(payload.message_id)
+            if not message:
+                return
+
+            # 自分のメッセージへの自分のリアクションは無視
+            if int(message["user_id"]) == int(payload.user_id):
+                return
+
+            emoji_name = str(payload.emoji.name) if payload.emoji.name else str(payload.emoji)
+
+            exists = await storage.check_reaction_exists(
+                payload.message_id,
+                payload.user_id,
+                emoji_name,
+            )
+            if exists:
+                return
+
+            weight = float(scoring_engine.calculate_reaction_weight(emoji_name))
+
+            await storage.insert_reaction(
+                message_id=payload.message_id,
+                user_id=payload.user_id,
+                reaction_type=emoji_name,
+                weight=weight,
+            )
+
+            await storage.update_message_reaction_score(payload.message_id, weight)
+            await storage.update_user_score(int(message["user_id"]), weight)
+
+        except DatabaseError as e:
+            logger.error(f"Database error processing reaction: {e}")
+        except Exception as e:
+            logger.error(f"Error processing reaction: {e}")
+
 
 # Botインスタンスを作成
 bot = QualityBot()
-
-
-# ============================================
-# Event Handlers
-# ============================================
-
-@bot.event
-async def on_message(message: Message) -> None:
-    """
-    メッセージ受信時のイベントハンドラー
-    
-    1. Botのメッセージは無視
-    2. ユーザー情報をupsert
-    3. メッセージを保存（発言=3pt）
-    4. ユーザースコアを +3 する
-    """
-    # Botのメッセージは無視
-    if message.author.bot:
-        return
-    
-    # DMは無視（サーバーのみ対象）
-    if not message.guild:
-        return
-    
-    try:
-        logger.info(
-            "on_message received: guild=%s channel=%s author=%s",
-            message.guild.id,
-            message.channel.id,
-            message.author.id,
-        )
-        # ユーザー情報をupsert
-        await storage.upsert_user(
-            user_id=message.author.id,
-            username=str(message.author)
-        )
-        
-        # メッセージを保存（初期スコア）
-        base_score = config.scoring.BASE_SCORE_PER_MESSAGE
-
-        # Message Content Intentを使わないため、内容は保存しない（必要なら将来拡張）
-        content: str | None = None
-
-        await storage.insert_message(
-            message_id=message.id,
-            user_id=message.author.id,
-            channel_id=message.channel.id,
-            guild_id=message.guild.id,
-            content=content,
-            nlp_score_multiplier=1.0,
-            base_score=base_score
-        )
-        
-        # 初期スコアをユーザーに加算
-        initial_score = float(base_score)
-        await storage.update_user_score(message.author.id, initial_score)
-
-        logger.info(
-            "score updated: author=%s +%s (message_id=%s)",
-            message.author.id,
-            initial_score,
-            message.id,
-        )
-        
-        logger.debug(f"Message processed: {message.id} from {message.author}")
-        
-    except DatabaseError as e:
-        logger.error(f"Database error processing message: {e}")
-    except Exception as e:
-        logger.error(f"Error processing message: {e}")
-    
-    # コマンドの処理を継続
-    await bot.process_commands(message)
-
-
-@bot.event
-async def on_raw_reaction_add(payload: RawReactionActionEvent) -> None:
-    """リアクション1つにつき1ptをメッセージ投稿者に加算"""
-    # Bot自身のリアクションは無視
-    if bot.user and payload.user_id == bot.user.id:
-        return
-
-    try:
-        message = await storage.get_message(payload.message_id)
-        if not message:
-            return
-
-        # 自分のメッセージへの自分のリアクションは無視
-        if int(message["user_id"]) == int(payload.user_id):
-            return
-
-        emoji_name = str(payload.emoji.name) if payload.emoji.name else str(payload.emoji)
-
-        exists = await storage.check_reaction_exists(
-            payload.message_id,
-            payload.user_id,
-            emoji_name,
-        )
-        if exists:
-            return
-
-        weight = float(scoring_engine.calculate_reaction_weight(emoji_name))
-
-        await storage.insert_reaction(
-            message_id=payload.message_id,
-            user_id=payload.user_id,
-            reaction_type=emoji_name,
-            weight=weight,
-        )
-
-        await storage.update_message_reaction_score(payload.message_id, weight)
-        await storage.update_user_score(int(message["user_id"]), weight)
-
-    except DatabaseError as e:
-        logger.error(f"Database error processing reaction: {e}")
-    except Exception as e:
-        logger.error(f"Error processing reaction: {e}")
-
-
- 
 
 
 # ============================================

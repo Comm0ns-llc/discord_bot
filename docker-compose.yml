@@ -1,0 +1,11 @@
+services:
+  bot:
+    build: .
+    image: discord-quality-bot
+    container_name: discord_quality_bot
+    restart: always
+    env_file:
+      - .env
+    # Volumes are optional since we use Supabase, but good for logs if needed
+    volumes:
+       - ./logs:/app/logs

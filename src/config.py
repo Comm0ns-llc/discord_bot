@@ -19,6 +19,7 @@ class DiscordConfig:
     """Discord関連の設定"""
     bot_token: str = field(default_factory=lambda: os.getenv("DISCORD_BOT_TOKEN", ""))
     application_id: str = field(default_factory=lambda: os.getenv("DISCORD_APPLICATION_ID", ""))
+    guild_id: str = field(default_factory=lambda: os.getenv("DISCORD_GUILD_ID", ""))
 
 
 @dataclass(frozen=True)
@@ -80,7 +81,7 @@ class BotConfig:
     supabase: SupabaseConfig = field(default_factory=SupabaseConfig)
     openai: OpenAIConfig = field(default_factory=OpenAIConfig)
     scoring: ScoringWeights = field(default_factory=ScoringWeights)
-    storage_backend: str = field(default_factory=lambda: os.getenv("STORAGE_BACKEND", "memory"))
+    storage_backend: str = field(default_factory=lambda: os.getenv("STORAGE_BACKEND", "supabase"))
     debug_mode: bool = field(
         default_factory=lambda: os.getenv("DEBUG_MODE", "false").lower() == "true"
     )
