@@ -122,3 +122,6 @@ site
 **/.DS_Store
 **/Thumbs.db
 fly.toml
+
+# Exclude data exports
+data_export/

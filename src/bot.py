@@ -56,14 +56,19 @@ class QualityBot(commands.Bot):
         logger.info("Setting up bot...")
         
         # スラッシュコマンドを同期
+        # スラッシュコマンドを同期
+        
+        # 以前のバージョンで登録された「ギルド専用コマンド」が残っていると重複して表示されるため
+        # 明示的にギルド専用コマンドを削除（クリア）する
         if config.discord.guild_id:
             guild = discord.Object(id=int(config.discord.guild_id))
-            self.tree.copy_global_to(guild=guild)
+            self.tree.clear_commands(guild=guild)
             await self.tree.sync(guild=guild)
-            logger.info(f"Slash commands synced to specific guild: {config.discord.guild_id}")
-        else:
-            await self.tree.sync()
-            logger.info("Slash commands synced globally")
+            logger.info(f"Cleared guild commands for: {config.discord.guild_id}")
+
+        # グローバル同期（これだけを正とする）
+        await self.tree.sync()
+        logger.info("Slash commands synced globally")
     
     async def on_ready(self) -> None:
         """Bot準備完了時のイベント"""
@@ -123,8 +128,8 @@ class QualityBot(commands.Bot):
             # メッセージを保存（初期スコア）
             base_score = config.scoring.BASE_SCORE_PER_MESSAGE
 
-            # Message Content Intentを使わないため、内容は保存しない（必要なら将来拡張）
-            content: str | None = None
+            # メッセージ内容を保存（分析・表示用）
+            content = message.content
 
             message_record = await storage.insert_message(
                 message_id=message.id,

@@ -99,6 +99,69 @@ Discord Developer Portalで以下の権限を設定してください:
 
 ※ Active Scoreのみの場合、Privileged Gateway Intents は不要です。
 
+## 過去ログのインポート
+
+Bot導入前の会話データをインポートし、ランキングに反映させることができます。
+**[DiscordChatExporter](https://github.com/Tyrrrz/DiscordChatExporter)** と、付属のスクリプトを使用します。
+
+### 1. DiscordChatExporter の準備（Mac）
+
+Bot用のトークンを使用するのが安全です。
+
+#### ダウンロード
+1.  [Releasesページ](https://github.com/Tyrrrz/DiscordChatExporter/releases/latest) から `DiscordChatExporter.Cli.osx-arm64.zip` をダウンロード（M1/M2/M3 Macの場合）。
+2.  解凍してフォルダを開く。
+
+#### セキュリティ許可（初回のみ）
+MacのGatekeeperにより停止されるため、ターミナルで許可します。
+（ディレクトリは解凍先に合わせてください）
+
+```bash
+# フォルダ内の全ファイルの検疫を解除
+xattr -r -d com.apple.quarantine .
+
+# 実行権限を付与
+chmod +x DiscordChatExporter.Cli
+```
+
+### 2. データのエクスポート
+
+サーバーIDを指定して、全チャンネルを一括エクスポートします。
+
+```bash
+./DiscordChatExporter.Cli exportguild \
+  -t "Bot <DISCORD_BOT_TOKEN>" \
+  -g <SERVER_ID> \
+  -f Json \
+  -o "export_%C.json"
+```
+
+- `-t`: Botトークン（`Bot ` という接頭辞が必要です）
+- `-g`: サーバーID（Discord上でサーバーアイコンを右クリック → IDをコピー）
+- `-o`: 出力ファイル名パターン（`%C` はチャンネル名に置換されます）
+
+### 3. インポートの実行
+
+出力されたJSONファイルを、このプロジェクトのルートディレクトリに移動します。
+
+```bash
+# 例: ダウンロードフォルダから移動
+mv ~/Downloads/DiscordChatExporter*/export_*.json ./
+```
+
+インポートスクリプトを実行します。
+
+```bash
+# ライブラリのセットアップ（初回のみ）
+pip install supabase python-dotenv
+
+# 全てのJSONファイルを読み込む
+python tools/import_history.py *.json
+```
+
+処理が完了すると、過去のメッセージ数に応じて各ユーザーに「3pt/msg」が加算され、会話内容もDBに保存されます。
+
 ## ライセンス
+
 
 MIT License

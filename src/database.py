@@ -514,14 +514,31 @@ class Database:
             dict: 統計情報
         """
         try:
-            def _get_stats() -> Any:
-                return self.client.table("messages").select(
-                    "base_score, nlp_score_multiplier, reply_count, reaction_score, total_score"
-                ).eq("user_id", user_id).execute()
+            all_data = []
+            limit = 1000
+            offset = 0
+            has_more = True
             
-            result = await self._execute_async(_get_stats)
+            while has_more:
+                def _get_batch(current_offset: int) -> Any:
+                    return self.client.table("messages").select(
+                        "base_score, nlp_score_multiplier, reply_count, reaction_score, total_score"
+                    ).eq("user_id", user_id).range(current_offset, current_offset + limit - 1).execute()
+                
+                result = await self._execute_async(lambda: _get_batch(offset))
+                
+                if not result.data:
+                    has_more = False
+                    break
+                
+                all_data.extend(result.data)
+                
+                if len(result.data) < limit:
+                    has_more = False
+                
+                offset += len(result.data)
             
-            if not result.data:
+            if not all_data:
                 return {
                     "total_messages": 0,
                     "total_base_score": 0.0,
@@ -533,18 +550,18 @@ class Database:
             
             from .config import config as app_config
             
-            total_messages = len(result.data)
-            total_base_score = sum(float(m["base_score"]) for m in result.data)
+            total_messages = len(all_data)
+            total_base_score = sum(float(m["base_score"]) for m in all_data)
             total_nlp_adjusted_score = sum(
                 float(m["base_score"]) * float(m["nlp_score_multiplier"])
-                for m in result.data
+                for m in all_data
             )
             total_reply_score = sum(
                 int(m["reply_count"]) * app_config.scoring.REPLY_SCORE_MULTIPLIER
-                for m in result.data
+                for m in all_data
             )
-            total_reaction_score = sum(float(m["reaction_score"]) for m in result.data)
-            total_score = sum(float(m["total_score"]) for m in result.data)
+            total_reaction_score = sum(float(m["reaction_score"]) for m in all_data)
+            total_score = sum(float(m["total_score"]) for m in all_data)
             
             return {
                 "total_messages": total_messages,

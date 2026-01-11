@@ -120,3 +120,8 @@ dmypy.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Data exports from DiscordChatExporter
+data_export/
+history.json
+*.json
