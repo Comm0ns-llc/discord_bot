@@ -113,7 +113,7 @@ class QualityBot(commands.Bot):
             # ユーザー情報をupsert
             await storage.upsert_user(
                 user_id=message.author.id,
-                username=str(message.author)
+                username=message.author.display_name
             )
             
             # NLP分析を実行
@@ -347,9 +347,18 @@ async def leaderboard_command(
         entries: list[str] = []
         for entry in leaderboard:
             score = entry["weekly_score"] if weekly else entry["current_score"]
+            user_id = int(entry["user_id"])
+            username = entry["username"]
+            
+            # サーバーから最新の表示名を取得を試みる
+            if interaction.guild:
+                member = interaction.guild.get_member(user_id)
+                if member:
+                    username = member.display_name
+            
             line = scoring_engine.format_leaderboard_entry(
                 rank=entry["rank"],
-                username=entry["username"],
+                username=username,
                 score=score,
                 weekly=weekly
             )
