@@ -85,6 +85,21 @@ class QualityBot(commands.Bot):
                 name="コミュニティの品質 📊"
             )
         )
+        
+        # チャンネル情報を同期
+        logger.info("Syncing channel information...")
+        channel_count = 0
+        for guild in self.guilds:
+            for channel in guild.channels:
+                # テキスト、ボイス、ステージ、フォーラムなどを対象にする
+                if isinstance(channel, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel, discord.ForumChannel)):
+                    await storage.upsert_channel(
+                        channel_id=channel.id,
+                        name=channel.name,
+                        channel_type=str(channel.type)
+                    )
+                    channel_count += 1
+        logger.info(f"Synced {channel_count} channels across {len(self.guilds)} guilds")
     
     async def close(self) -> None:
         """Bot終了時のクリーンアップ"""
@@ -130,6 +145,13 @@ class QualityBot(commands.Bot):
 
             # メッセージ内容を保存（分析・表示用）
             content = message.content
+            
+            # チャンネル情報をupsert
+            await storage.upsert_channel(
+                channel_id=message.channel.id,
+                name=message.channel.name,
+                channel_type=str(message.channel.type)
+            )
 
             message_record = await storage.insert_message(
                 message_id=message.id,

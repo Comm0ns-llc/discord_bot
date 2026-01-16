@@ -23,6 +23,8 @@ def _now_iso() -> str:
 
 
 class Storage(Protocol):
+    async def upsert_channel(self, channel_id: int, name: str, channel_type: str | None = None) -> dict[str, Any] | None: ...
+
     async def upsert_user(self, user_id: int, username: str) -> dict[str, Any] | None: ...
 
     async def get_user(self, user_id: int) -> dict[str, Any] | None: ...
@@ -58,6 +60,9 @@ class Storage(Protocol):
 class SupabaseStorage:
     def __init__(self) -> None:
         self._db = Database()
+
+    async def upsert_channel(self, channel_id: int, name: str, channel_type: str | None = None) -> dict[str, Any] | None:
+        return await self._db.upsert_channel(channel_id=channel_id, name=name, channel_type=channel_type)
 
     async def upsert_user(self, user_id: int, username: str) -> dict[str, Any] | None:
         return await self._db.upsert_user(user_id=user_id, username=username)
@@ -152,7 +157,20 @@ class MemoryStorage:
         self._lock = asyncio.Lock()
         self._users: dict[int, _MemoryUser] = {}
         self._messages: dict[int, _MemoryMessage] = {}
+        self._channels: dict[int, dict[str, Any]] = {}
         self._reactions: set[tuple[int, int, str]] = set()  # (message_id, user_id, reaction_type)
+
+    async def upsert_channel(self, channel_id: int, name: str, channel_type: str | None = None) -> dict[str, Any] | None:
+        async with self._lock:
+            now = _now_iso()
+            self._channels[channel_id] = {
+                "channel_id": channel_id,
+                "name": name,
+                "type": channel_type,
+                "created_at": now,
+                "updated_at": now,
+            }
+            return self._channels[channel_id]
 
     async def upsert_user(self, user_id: int, username: str) -> dict[str, Any] | None:
         async with self._lock:

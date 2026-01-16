@@ -63,6 +63,15 @@ class LeaderboardEntry(TypedDict):
     rank: int
 
 
+class ChannelRecord(TypedDict):
+    """チャンネルレコードの型定義"""
+    channel_id: int
+    name: str
+    type: str | None
+    created_at: str
+    updated_at: str
+
+
 class Database:
     """
     Supabaseデータベース操作クラス
@@ -94,6 +103,52 @@ class Database:
         """
         return await asyncio.to_thread(func)
     
+    # ============================================
+    # Channel Operations
+    # ============================================
+
+    async def upsert_channel(
+        self,
+        channel_id: int,
+        name: str,
+        channel_type: str | None = None
+    ) -> ChannelRecord | None:
+        """
+        チャンネルを作成または更新
+        
+        Args:
+            channel_id: Discord Channel ID
+            name: Channel Name
+            channel_type: Channel Type
+            
+        Returns:
+            ChannelRecord | None: 作成/更新されたチャンネルレコード
+        """
+        try:
+            def _upsert() -> Any:
+                data = {
+                    "channel_id": channel_id,
+                    "name": name
+                }
+                if channel_type:
+                    data["type"] = channel_type
+                    
+                return self.client.table("channels").upsert(
+                    data, on_conflict="channel_id"
+                ).execute()
+            
+            result = await self._execute_async(_upsert)
+            
+            if result.data:
+                return result.data[0]
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to upsert channel {channel_id}: {e}")
+            # Non-critical, so we might just log it 
+            # raise DatabaseError(f"Failed to upsert channel: {e}") from e
+            return None
+
     # ============================================
     # User Operations
     # ============================================

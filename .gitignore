@@ -125,3 +125,6 @@ Thumbs.db
 data_export/
 history.json
 *.json
+
+# Frontend
+!web/src/lib/
