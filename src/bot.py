@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
+from datetime import datetime, timezone
 
 from .config import config, validate_config, EmbedColors
 from .database import DatabaseError
@@ -100,11 +101,81 @@ class QualityBot(commands.Bot):
                     )
                     channel_count += 1
         logger.info(f"Synced {channel_count} channels across {len(self.guilds)} guilds")
+
+        # 週間リセットタスクを開始
+        if not self.check_weekly_reset.is_running():
+            self.check_weekly_reset.start()
     
     async def close(self) -> None:
         """Bot終了時のクリーンアップ"""
         logger.info("Shutting down bot...")
+        self.check_weekly_reset.cancel()
         await super().close()
+
+    @tasks.loop(minutes=60)
+    async def check_weekly_reset(self) -> None:
+        """
+        週間スコアリセットのチェック
+        
+        毎週月曜日の0:00 (UTC) 頃に実行されることを想定
+        """
+        try:
+            # 現在の週番号を取得 (ISO 8601: 月曜始まり)
+            # YYYY-Www 形式 (例: 2023-W42)
+            now = datetime.now(timezone.utc)
+            current_week = now.strftime("%Y-W%V")
+            
+            # DBから「最後にリセットした週」を取得
+            last_reset_week = await storage.get_metadata("last_weekly_reset_week")
+            
+            if last_reset_week != current_week:
+                logger.info(f"New week detected: {current_week} (Last: {last_reset_week})")
+                
+                # リセットを実行
+                success = await storage.reset_weekly_scores()
+                
+                if success:
+                    # 成功したらメタデータを更新
+                    await storage.update_metadata("last_weekly_reset_week", current_week)
+                    logger.info("Weekly leaderboard reset completed.")
+                    
+                    await storage.update_metadata("last_weekly_reset_week", current_week)
+                    logger.info("Weekly leaderboard reset completed.")
+                    
+                    # 通知チャンネルがあれば通知を送る
+                    if config.discord.notification_channel_id:
+                        try:
+                            channel_id = int(config.discord.notification_channel_id)
+                            channel = self.get_channel(channel_id)
+                            if channel:
+                                embed = discord.Embed(
+                                    title="🔄 週間リーダーボード リセット",
+                                    description=(
+                                        "新しい週が始まりました！\n"
+                                        "週間スコアがリセットされました。\n"
+                                        "今週も上位を目指して頑張りましょう！ 🚀"
+                                    ),
+                                    color=EmbedColors.INFO,
+                                    timestamp=now
+                                )
+                                await channel.send(embed=embed)
+                                logger.info(f"Sent reset notification to channel {channel_id}")
+                            else:
+                                logger.warning(f"Notification channel {channel_id} not found")
+                        except ValueError:
+                            logger.error("Invalid notification channel ID")
+                        except Exception as e:
+                            logger.error(f"Failed to send reset notification: {e}")
+                else:
+                    logger.error("Failed to reset weekly leaderboard.")
+        
+        except Exception as e:
+            logger.error(f"Error in check_weekly_reset: {e}")
+
+    @check_weekly_reset.before_loop
+    async def before_check_weekly_reset(self) -> None:
+        """ループ開始前の待機"""
+        await self.wait_until_ready()
 
     async def on_message(self, message: Message) -> None:
         """

@@ -20,6 +20,7 @@ class DiscordConfig:
     bot_token: str = field(default_factory=lambda: os.getenv("DISCORD_BOT_TOKEN", ""))
     application_id: str = field(default_factory=lambda: os.getenv("DISCORD_APPLICATION_ID", ""))
     guild_id: str = field(default_factory=lambda: os.getenv("DISCORD_GUILD_ID", ""))
+    notification_channel_id: str = field(default_factory=lambda: os.getenv("DISCORD_NOTIFICATION_CHANNEL_ID", ""))
 
 
 @dataclass(frozen=True)

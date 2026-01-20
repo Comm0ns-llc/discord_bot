@@ -63,12 +63,20 @@ class LeaderboardEntry(TypedDict):
     rank: int
 
 
+
 class ChannelRecord(TypedDict):
     """チャンネルレコードの型定義"""
     channel_id: int
     name: str
     type: str | None
     created_at: str
+    updated_at: str
+
+
+class BotMetadata(TypedDict):
+    """Botメタデータの型定義"""
+    key: str
+    value: str
     updated_at: str
 
 
@@ -701,6 +709,79 @@ class Database:
             
         except Exception as e:
             logger.error(f"Failed to check reaction exists: {e}")
+            return False
+
+    # ============================================
+    # Metadata & Maintenance Operations
+    # ============================================
+
+    async def get_metadata(self, key: str) -> str | None:
+        """
+        メタデータを取得
+        
+        Args:
+            key: メタデータキー
+            
+        Returns:
+            str | None: 値
+        """
+        try:
+            def _get() -> Any:
+                return self.client.table("bot_metadata").select("value").eq("key", key).execute()
+            
+            result = await self._execute_async(_get)
+            
+            if result.data:
+                return result.data[0]["value"]
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to get metadata {key}: {e}")
+            return None
+
+    async def update_metadata(self, key: str, value: str) -> bool:
+        """
+        メタデータを更新
+        
+        Args:
+            key: メタデータキー
+            value: 値
+            
+        Returns:
+            bool: 成功時True
+        """
+        try:
+            def _upsert() -> Any:
+                return self.client.table("bot_metadata").upsert({
+                    "key": key,
+                    "value": value,
+                    "updated_at": datetime.now().isoformat()
+                }).execute()
+            
+            await self._execute_async(_upsert)
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to update metadata {key}: {e}")
+            return False
+
+    async def reset_weekly_scores(self) -> bool:
+        """
+        週間スコアをリセット（DB関数呼び出し）
+        
+        Returns:
+            bool: 成功時True
+        """
+        try:
+            def _call_rpc() -> Any:
+                return self.client.rpc("reset_weekly_scores", {}).execute()
+            
+            await self._execute_async(_call_rpc)
+            logger.info("Weekly scores reset successfully via RPC")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to reset weekly scores: {e}")
             return False
 
 

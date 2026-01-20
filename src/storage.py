@@ -56,6 +56,12 @@ class Storage(Protocol):
 
     async def update_message_reaction_score(self, message_id: int, reaction_score_delta: float) -> dict[str, Any] | None: ...
 
+    async def get_metadata(self, key: str) -> str | None: ...
+
+    async def update_metadata(self, key: str, value: str) -> bool: ...
+
+    async def reset_weekly_scores(self) -> bool: ...
+
 
 class SupabaseStorage:
     def __init__(self) -> None:
@@ -126,6 +132,15 @@ class SupabaseStorage:
             reaction_score_delta=reaction_score_delta,
         )
 
+    async def get_metadata(self, key: str) -> str | None:
+        return await self._db.get_metadata(key=key)
+
+    async def update_metadata(self, key: str, value: str) -> bool:
+        return await self._db.update_metadata(key=key, value=value)
+
+    async def reset_weekly_scores(self) -> bool:
+        return await self._db.reset_weekly_scores()
+
 
 @dataclass
 class _MemoryUser:
@@ -159,6 +174,7 @@ class MemoryStorage:
         self._messages: dict[int, _MemoryMessage] = {}
         self._channels: dict[int, dict[str, Any]] = {}
         self._reactions: set[tuple[int, int, str]] = set()  # (message_id, user_id, reaction_type)
+        self._metadata: dict[str, str] = {}
 
     async def upsert_channel(self, channel_id: int, name: str, channel_type: str | None = None) -> dict[str, Any] | None:
         async with self._lock:
@@ -308,6 +324,21 @@ class MemoryStorage:
             # total_score = base_score * nlp_multiplier (fixed to 1.0) + reaction_score
             message.total_score = float(message.base_score) * float(message.nlp_score_multiplier) + float(message.reaction_score)
             return self._message_to_record(message)
+
+    async def get_metadata(self, key: str) -> str | None:
+        async with self._lock:
+            return self._metadata.get(key)
+
+    async def update_metadata(self, key: str, value: str) -> bool:
+        async with self._lock:
+            self._metadata[key] = value
+            return True
+
+    async def reset_weekly_scores(self) -> bool:
+        async with self._lock:
+            for user in self._users.values():
+                user.weekly_score = 0.0
+            return True
 
     def _user_to_record(self, user: _MemoryUser | None) -> dict[str, Any] | None:
         if user is None:
