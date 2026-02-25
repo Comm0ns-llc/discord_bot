@@ -170,6 +170,60 @@ python tools/import_history.py *.json
 
 処理が完了すると、過去のメッセージ数に応じて各ユーザーに「3pt/msg」が加算され、会話内容もDBに保存されます。
 
+## CLIダッシュボード（試作）
+
+`system設計書2.md` の v2 指標（CP/TS/VP、カテゴリ分類、月間ランキング）に合わせたCLIダッシュボードです。
+現在のDBスキーマに無いテーブル（`votes`, `issues` など）は `operations` ページで `PENDING` として表示します。
+
+```bash
+python tools/dashboard_cli.py --section overview
+```
+
+`htop` 風のページ分割TUIでも確認できます（9ページ）。
+
+```bash
+python tools/dashboard_cli.py --tui
+```
+
+TUIキー操作:
+- `1-9` : ページ切替（Overview / MyStats / Leaderboard / Categories / Channels / Behavior / Graph / Governance / Operations）
+- `Tab` / `←` / `→` : ページ移動
+- `r` : 手動リフレッシュ
+- `a` : 自動更新 ON/OFF
+- `+` / `-` : 表示件数（limit）変更
+- `[` / `]` : トレンド表示日数変更
+- `u` : MyStatsの対象を自動TOPユーザーに戻す
+- `q` : 終了
+
+主なオプション:
+- `--section` : `overview` / `mystats` / `leaderboard` / `categories` / `channels` / `behavior` / `graph` / `governance` / `operations` / `all`
+- `--limit` : ランキング系の表示件数（デフォルト `10`）
+- `--days` : overview の直近トレンド日数（デフォルト `14`）
+- `--lookback-days` : DBスキャン対象の日数（デフォルト `90`）
+- `--max-messages` : スキャンするメッセージ上限（デフォルト `50000`）
+- `--max-reactions` : スキャンするリアクション上限（デフォルト `50000`）
+- `--max-users` : モデル化するユーザー上限（デフォルト `5000`）
+- `--timeout` : Supabaseリクエストのタイムアウト秒（デフォルト `20`）
+- `--refresh` : TUI自動更新間隔（秒、デフォルト `15`）
+- `--user` : MyStats対象ユーザー（`user_id` または `username`）
+- `--tui` : インタラクティブTUIモードで起動
+
+例:
+
+```bash
+# すべてのセクションを表示
+python tools/dashboard_cli.py --section all --limit 20
+
+# 特定ユーザーのMyStatsを表示
+python tools/dashboard_cli.py --section mystats --user Tsukuru86
+
+# TUIを10秒間隔で更新
+python tools/dashboard_cli.py --tui --refresh 10
+
+# 重い環境向け（短い期間だけ見る）
+python tools/dashboard_cli.py --tui --lookback-days 30 --max-messages 15000 --max-reactions 15000
+```
+
 ## プロジェクト管理・ガバナンス
 
 このコードベースは **Organization** によって管理されています。
