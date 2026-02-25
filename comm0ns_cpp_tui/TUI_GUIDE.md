@@ -49,6 +49,8 @@ export LC_ALL=ja_JP.UTF-8
 | キー | 動作 | 対象 |
 |---|---|---|
 | `1`..`5` | ページ切替 | 全体 |
+| 上部タブクリック | ページ切替 | 全体 |
+| Members行クリック | 選択行の移動 | Members |
 | `j` / `k` | 選択行の移動 | Members |
 | `s` | ソートキー切替 | Members |
 | `r` | DB手動再読込 | 全体 |
@@ -64,15 +66,33 @@ export LC_ALL=ja_JP.UTF-8
 | Governance | 左: 投票一覧と成立判定、右: VP分布 |
 | Issues | Issue状態集計・一覧・Sprint表示 |
 
-### 5.1 Members ページ補足
+## 6. 画面内に登場する指標（用語）解説
+
+TUI各画面に表示される略語および指標は、Comm0nsの人物評価システム仕様に基づいています。
+
+### 総合指標
+- **`CP` (貢献ポイント / Contribution Points)**: コミュニティでの活動量や質に基づく累計スコア。
+- **`TS` (信頼スコア / Trust Score)**: メンバーのコミュニティに対する信頼度。初期値・上限は100で、ペナルティ等でのみ減点されます。
+- **`VP` (議決権 / Voting Power)**: 投票力。累積CPと現在のTSを加味して対数スケール等で算出され、方針決定時に用いる票の重みです。
+- **`STK` (STAKE)**: ステーキング量（トークンや貢献の預入れ想定）。
+- **`CP%`**: コミュニティ全体の総CPに対する、該当メンバーが保有するCPのシェア率。
+
+### 行動カテゴリ（メッセージ種別）
+メンバーの発言は内容に基づき分類され、それぞれ集計・可視化されます。
+- **`INFO` (情報シェア)**: URLやニュース、資料の共有など、コミュニティにとって参照価値のある発言。
+- **`INSI` / `INSIGHT` (知見・意見)**: 分析や経験に基づく考察、オリジナルな思考・提案を伴う発言。
+- **`VIBE` (コミュニティ活性化)**: 挨拶、盛り上げ、歓迎など、場の空気を良くするコミュニケーション。
+- **`OPS` (運営・調整)**: タスク管理、スケジュール調整、告知などの実践的な運営サポート活動。
+
+### 6.1 Members ページ補足
 
 | 項目 | 内容 |
 |---|---|
 | 左ペイン列 | `CP / TS / VP / STK / INFO / INSI / VIBE / OPS / CP%` |
 | 列揃え | UTF-8表示幅ベースで整列 |
-| 右ペイン | カテゴリ構成、VP計算式、Thanks受送信 |
+| 右ペイン | カテゴリ構成、VP計算式 |
 
-### 5.2 Channels / Governance / Issues の PENDING 表示
+### 6.2 Channels / Governance / Issues の PENDING 表示
 
 | テーブル状態 | 表示 |
 |---|---|
@@ -80,7 +100,7 @@ export LC_ALL=ja_JP.UTF-8
 | `votes` 未整備 | 投票欄に `PENDING` 表示 |
 | `issues` 未整備 | Issues欄に `PENDING` 表示 |
 
-## 6. データ取得仕様（Supabase）
+## 7. データ取得仕様（Supabase）
 
 | 種別 | 名前 | 必須 |
 |---|---|---|
@@ -95,7 +115,7 @@ export LC_ALL=ja_JP.UTF-8
 | Table | `votes` | No |
 | Table | `issues` | No |
 
-## 7. 右上ステータスの意味
+## 8. 右上ステータスの意味
 
 | ステータス | 意味 |
 |---|---|
@@ -103,9 +123,9 @@ export LC_ALL=ja_JP.UTF-8
 | `DB STALE` | 既存データは保持しているが最新リフレッシュ失敗 |
 | `DB ERROR` | 初回読込失敗（接続情報不足 / 到達不可など） |
 
-## 8. トラブルシュート
+## 9. トラブルシュート
 
-### 8.1 `DB ERROR` のまま
+### 9.1 `DB ERROR` のまま
 
 切り分け順序:
 
@@ -125,14 +145,14 @@ curl -sS --fail --get "$SUPABASE_URL/rest/v1/users" \
   --data-urlencode "limit=1"
 ```
 
-### 8.2 日本語が文字化けする
+### 9.2 日本語が文字化けする
 
 ```bash
 export LANG=ja_JP.UTF-8
 export LC_ALL=ja_JP.UTF-8
 ```
 
-### 8.3 `./build/comm0ns_tui` が見つからない
+### 9.3 `./build/comm0ns_tui` が見つからない
 
 ```bash
 cd /Users/tsukuru/Dev/myprojects/comm0ns/comm0ns_discord_bot/comm0ns_cpp_tui
@@ -140,7 +160,7 @@ cmake --build build -j4
 ./build/comm0ns_tui
 ```
 
-## 9. 拡張ポイント
+## 10. 拡張ポイント
 
 | テーマ | 実施内容 |
 |---|---|

@@ -646,6 +646,19 @@ std::string normalize_channel_label(const std::string& name, long long channel_i
 
 class DashboardApp {
 public:
+    struct TabHit {
+        int x0;
+        int x1;
+        int page;
+    };
+
+    struct MemberRowHit {
+        int y;
+        int x0;
+        int x1;
+        int row_index;
+    };
+
     DashboardApp() : rng_(std::random_device{}()) {
         init_empty_state();
         // Mock seed is intentionally disabled.
@@ -662,6 +675,8 @@ public:
         keypad(stdscr, TRUE);
         nodelay(stdscr, TRUE);
         curs_set(0);
+        mousemask(ALL_MOUSE_EVENTS, nullptr);
+        mouseinterval(0);
 
         if (has_colors()) {
             start_color();
@@ -750,6 +765,8 @@ private:
     int db_refresh_interval_sec_ = 30;
     std::chrono::steady_clock::time_point last_db_refresh_ = std::chrono::steady_clock::now();
     std::mt19937 rng_;
+    std::vector<TabHit> tab_hits_;
+    std::vector<MemberRowHit> member_row_hits_;
 
     QueryResult query_supabase(
         const std::string& endpoint,
@@ -1430,6 +1447,7 @@ private:
             "5:Issues"
         };
 
+        tab_hits_.clear();
         int x = 1;
         for (size_t i = 0; i < tabs.size(); ++i) {
             const bool active = static_cast<int>(i + 1) == page_;
@@ -1439,6 +1457,7 @@ private:
             const std::string label = " " + tabs[i] + " ";
             mvaddnstr(0, x, label.c_str(), w - x - 1);
             attroff(attr);
+            tab_hits_.push_back({x, x + static_cast<int>(label.size()) - 1, static_cast<int>(i + 1)});
             x += static_cast<int>(label.size()) + 1;
         }
 
@@ -1447,6 +1466,33 @@ private:
             right += "  ref:" + last_refresh_hms_;
         }
         put_line(0, std::max(1, w - static_cast<int>(right.size()) - 2), static_cast<int>(right.size()), right, 2, true);
+    }
+
+    void handle_mouse() {
+        MEVENT event{};
+        if (getmouse(&event) != OK) {
+            return;
+        }
+        if (!(event.bstate & (BUTTON1_CLICKED | BUTTON1_DOUBLE_CLICKED | BUTTON1_PRESSED | BUTTON1_RELEASED))) {
+            return;
+        }
+        if (event.y == 0) {
+            for (const auto& hit : tab_hits_) {
+                if (event.x >= hit.x0 && event.x <= hit.x1) {
+                    page_ = hit.page;
+                    return;
+                }
+            }
+        }
+
+        if (page_ == 2) {
+            for (const auto& hit : member_row_hits_) {
+                if (event.y == hit.y && event.x >= hit.x0 && event.x <= hit.x1) {
+                    selected_member_row_ = hit.row_index;
+                    return;
+                }
+            }
+        }
     }
 
     void draw_footer(int h, int w) {
@@ -1612,6 +1658,7 @@ private:
         const auto sorted = sorted_member_indices();
         const int row_count = static_cast<int>(sorted.size());
         selected_member_row_ = clampi(selected_member_row_, 0, std::max(0, row_count - 1));
+        member_row_hits_.clear();
 
         const int col_on = 2;
         const int col_name = 10;
@@ -1675,6 +1722,7 @@ private:
             const int vp = calc_vp(m.cp);
             const int cp_pct = static_cast<int>(std::round((static_cast<double>(m.cp) / max_cp) * 100.0));
             put_line(table_y + i, x, w, fit(row_line(m, vp, cp_pct), w), selected ? 8 : 1, false);
+            member_row_hits_.push_back({table_y + i, x, x + std::max(0, w - 1), i});
         }
     }
 
@@ -2005,6 +2053,9 @@ private:
             case 'r':
             case 'R':
                 refresh_from_db(true);
+                break;
+            case KEY_MOUSE:
+                handle_mouse();
                 break;
             default:
                 break;
