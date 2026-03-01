@@ -63,6 +63,8 @@ def main():
     # The C++ app currently reads SUPABASE_URL and SUPABASE_KEY from the environment
     os.environ["SUPABASE_URL"] = url
     os.environ["SUPABASE_KEY"] = key
+    if session and "access_token" in session:
+        os.environ["SUPABASE_AUTH_TOKEN"] = session["access_token"]
 
     # Path to the compiled C++ binary
     tui_bin = project_root / "comm0ns_cpp_tui" / "build" / "comm0ns_tui"

@@ -794,9 +794,10 @@ private:
         std::string script = "set -o pipefail; "
                              "if [ -z \"$SUPABASE_URL\" ] || [ -z \"$SUPABASE_KEY\" ]; then "
                              "echo \"SUPABASE_URL/SUPABASE_KEY missing\"; exit 64; fi; "
+                             "AUTH_TOKEN=\"${SUPABASE_AUTH_TOKEN:-$SUPABASE_KEY}\"; "
                              "curl -sS --fail --get \"$SUPABASE_URL/rest/v1/" + endpoint + "\" "
                              "-H \"apikey: $SUPABASE_KEY\" "
-                             "-H \"Authorization: Bearer $SUPABASE_KEY\" "
+                             "-H \"Authorization: Bearer $AUTH_TOKEN\" "
                              "2>/dev/null ";
         for (const auto& param : query_params) {
             script += "--data-urlencode " + shell_quote(param) + " ";
