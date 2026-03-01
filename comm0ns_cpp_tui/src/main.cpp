@@ -47,6 +47,12 @@ enum class SortKey {
     Ops
 };
 
+enum class ChannelActivityRange {
+    All,
+    Month,
+    Week
+};
+
 struct Member {
     std::string name;
     int cp;
@@ -64,7 +70,9 @@ struct Member {
 
 struct Channel {
     std::string name;
-    int messages;
+    int messages_total;
+    int messages_month;
+    int messages_week;
     std::string champion;
     int active_users;
     double weight;
@@ -659,6 +667,13 @@ public:
         int row_index;
     };
 
+    struct ChannelRangeHit {
+        int y;
+        int x0;
+        int x1;
+        ChannelActivityRange range;
+    };
+
     DashboardApp() : rng_(std::random_device{}()) {
         init_empty_state();
         // Mock seed is intentionally disabled.
@@ -752,6 +767,7 @@ private:
     int page_ = 1;
     int selected_member_row_ = 0;
     SortKey sort_key_ = SortKey::Cp;
+    ChannelActivityRange channel_activity_range_ = ChannelActivityRange::All;
     bool using_mock_data_ = false;
     bool db_ready_ = false;
     bool members_table_available_ = false;
@@ -767,6 +783,7 @@ private:
     std::mt19937 rng_;
     std::vector<TabHit> tab_hits_;
     std::vector<MemberRowHit> member_row_hits_;
+    std::vector<ChannelRangeHit> channel_range_hits_;
 
     QueryResult query_supabase(
         const std::string& endpoint,
@@ -832,14 +849,14 @@ private:
         };
 
         channels_ = {
-            {"#general", 234, "Mina", 7, 1.0},
-            {"#dev", 203, "Tate", 6, 1.2},
-            {"#random", 178, "Ken", 5, 0.8},
-            {"#agri", 167, "Tate", 4, 1.2},
-            {"#governance", 142, "Haru", 5, 1.0},
-            {"#learning", 98, "Aoi", 4, 1.2},
-            {"#book-commons", 76, "Aoi", 3, 1.2},
-            {"#music", 45, "Yuu", 2, 0.8}
+            {"#general", 234, 126, 38, "Mina", 7, 1.0},
+            {"#dev", 203, 132, 44, "Tate", 6, 1.2},
+            {"#random", 178, 101, 33, "Ken", 5, 0.8},
+            {"#agri", 167, 109, 36, "Tate", 4, 1.2},
+            {"#governance", 142, 84, 29, "Haru", 5, 1.0},
+            {"#learning", 98, 64, 21, "Aoi", 4, 1.2},
+            {"#book-commons", 76, 47, 16, "Aoi", 3, 1.2},
+            {"#music", 45, 25, 8, "Yuu", 2, 0.8}
         };
 
         votes_ = {
@@ -996,6 +1013,8 @@ private:
 
         std::unordered_map<long long, long long> message_owner;
         std::unordered_map<long long, int> channel_message_count;
+        std::unordered_map<long long, int> channel_message_count_month;
+        std::unordered_map<long long, int> channel_message_count_week;
         std::unordered_map<long long, std::unordered_map<long long, int>> channel_user_counts;
         std::unordered_map<long long, std::unordered_set<long long>> channel_active_users;
         std::unordered_map<long long, std::set<int>> active_days_by_user;
@@ -1071,6 +1090,12 @@ private:
                 channel_active_users[channel_id].insert(user_id);
 
                 if (day) {
+                    if (*day >= (today_serial - 29)) {
+                        channel_message_count_month[channel_id] += 1;
+                    }
+                    if (*day >= (today_serial - 6)) {
+                        channel_message_count_week[channel_id] += 1;
+                    }
                     active_days_by_user[user_id].insert(*day);
                     if (*day == today_serial && member) {
                         member->online = true;
@@ -1193,6 +1218,8 @@ private:
                 channels_.push_back({
                     channel_name,
                     std::max(0, to_int(row[2], 0)),
+                    std::max(0, channel_message_count_month[channel_id]),
+                    std::max(0, channel_message_count_week[channel_id]),
                     champion_name_by_channel.count(channel_id) ? champion_name_by_channel[channel_id] : "-",
                     std::max(0, to_int(row[3], 0)),
                     channel_weight(channel_name)
@@ -1221,13 +1248,15 @@ private:
                 channels_.push_back({
                     channel_name,
                     std::max(0, it.second),
+                    std::max(0, channel_message_count_month[channel_id]),
+                    std::max(0, channel_message_count_week[channel_id]),
                     champion,
                     static_cast<int>(channel_active_users[channel_id].size()),
                     channel_weight(channel_name)
                 });
             }
             std::sort(channels_.begin(), channels_.end(), [](const Channel& a, const Channel& b) {
-                return a.messages > b.messages;
+                return a.messages_total > b.messages_total;
             });
         }
 
@@ -1398,6 +1427,44 @@ private:
         return idx;
     }
 
+    int channel_messages_for_range(const Channel& ch) const {
+        switch (channel_activity_range_) {
+            case ChannelActivityRange::All: return ch.messages_total;
+            case ChannelActivityRange::Month: return ch.messages_month;
+            case ChannelActivityRange::Week: return ch.messages_week;
+        }
+        return ch.messages_total;
+    }
+
+    std::string channel_range_label() const {
+        switch (channel_activity_range_) {
+            case ChannelActivityRange::All: return "TOTAL";
+            case ChannelActivityRange::Month: return "MONTH";
+            case ChannelActivityRange::Week: return "WEEK";
+        }
+        return "TOTAL";
+    }
+
+    std::vector<const Channel*> sorted_channels_for_activity() const {
+        std::vector<const Channel*> ordered;
+        ordered.reserve(channels_.size());
+        for (const auto& ch : channels_) {
+            ordered.push_back(&ch);
+        }
+        std::sort(ordered.begin(), ordered.end(), [&](const Channel* lhs, const Channel* rhs) {
+            const int left = channel_messages_for_range(*lhs);
+            const int right = channel_messages_for_range(*rhs);
+            if (left != right) {
+                return left > right;
+            }
+            if (lhs->messages_total != rhs->messages_total) {
+                return lhs->messages_total > rhs->messages_total;
+            }
+            return lhs->name < rhs->name;
+        });
+        return ordered;
+    }
+
     void draw() {
         erase();
 
@@ -1493,10 +1560,19 @@ private:
                 }
             }
         }
+
+        if (page_ == 3) {
+            for (const auto& hit : channel_range_hits_) {
+                if (event.y == hit.y && event.x >= hit.x0 && event.x <= hit.x1) {
+                    channel_activity_range_ = hit.range;
+                    return;
+                }
+            }
+        }
     }
 
     void draw_footer(int h, int w) {
-        const std::string left = "j/k:select  s:sort  r:refresh  1-5:page  q:quit";
+        const std::string left = "j/k:select  s:sort  a/m/w:ch-range  r:refresh  1-5:page  q:quit";
         const std::string right = "Design: Stage1/2/3 + CP*TS + VP(log2) + Vote/Issue/Titles";
         put_line(h - 1, 1, w - 2, left, 7, false);
         put_line(h - 1, std::max(1, w - static_cast<int>(right.size()) - 2), static_cast<int>(right.size()), right, 7, false);
@@ -1775,32 +1851,37 @@ private:
     }
 
     void draw_channels_left(int y, int x, int h, int w) {
+        channel_range_hits_.clear();
+        const auto ordered_channels = sorted_channels_for_activity();
+
         int max_msg = 1;
-        for (const auto& ch : channels_) {
-            max_msg = std::max(max_msg, ch.messages);
+        for (const Channel* ch : ordered_channels) {
+            max_msg = std::max(max_msg, channel_messages_for_range(*ch));
         }
 
         const int col_ch = 12;
-        const int col_msg = 4;
+        const int col_msg = 5;
         const int col_active = 3;
         const int col_weight = 4;
         const int col_champ = 10;
         const int fixed = col_ch + col_msg + col_active + col_weight + col_champ + 19;
         const int bar_w = std::max(8, std::min(16, w - fixed));
+        const std::string msg_label = channel_range_label();
 
         auto header_line = [&]() -> std::string {
             return pad_right_display("CHANNEL", col_ch) + " " +
                    "[" + std::string(bar_w, '-') + "] " +
-                   pad_left_display("MSG", col_msg) + " " +
+                   pad_left_display(msg_label, col_msg) + " " +
                    "A:" + pad_left_display("U", col_active) + " " +
                    "W:" + pad_left_display("x", col_weight) + " " +
                    "C:" + pad_right_display("CHAMP", col_champ);
         };
 
         auto row_line = [&](const Channel& ch) -> std::string {
+            const int messages = channel_messages_for_range(ch);
             return pad_right_display(ch.name, col_ch) + " " +
-                   "[" + bar(ch.messages, max_msg, bar_w) + "] " +
-                   pad_left_display(std::to_string(ch.messages), col_msg) + " " +
+                   "[" + bar(messages, max_msg, bar_w) + "] " +
+                   pad_left_display(std::to_string(messages), col_msg) + " " +
                    "A:" + pad_left_display(std::to_string(ch.active_users), col_active) + " " +
                    "W:" + pad_left_display(format_double(ch.weight, 1), col_weight) + " " +
                    "C:" + pad_right_display(ch.champion, col_champ);
@@ -1808,12 +1889,34 @@ private:
 
         int line = y;
         if (line < y + h) {
+            put_line(line, x, w, "Range:", 7, true);
+            int cursor = x + 7;
+            auto draw_range_chip = [&](ChannelActivityRange range, const std::string& label) {
+                if (cursor >= x + w) {
+                    return;
+                }
+                const bool active = (channel_activity_range_ == range);
+                const std::string text = "[" + label + "]";
+                const int avail = x + w - cursor;
+                put_line(line, cursor, avail, text, active ? 8 : 7, active);
+                const int visible = std::min(static_cast<int>(text.size()), avail);
+                if (visible > 0) {
+                    channel_range_hits_.push_back({line, cursor, cursor + visible - 1, range});
+                }
+                cursor += static_cast<int>(text.size()) + 1;
+            };
+            draw_range_chip(ChannelActivityRange::All, "All");
+            draw_range_chip(ChannelActivityRange::Month, "Month");
+            draw_range_chip(ChannelActivityRange::Week, "Week");
+            ++line;
+        }
+        if (line < y + h) {
             put_line(line++, x, w, fit(header_line(), w), 7, true);
         }
-        for (const auto& ch : channels_) {
+        for (const Channel* ch : ordered_channels) {
             if (line >= y + h) break;
-            int color = (ch.weight > 1.0) ? 3 : ((ch.weight < 1.0) ? 7 : 1);
-            put_line(line++, x, w, fit(row_line(ch), w), color);
+            int color = (ch->weight > 1.0) ? 3 : ((ch->weight < 1.0) ? 7 : 1);
+            put_line(line++, x, w, fit(row_line(*ch), w), color);
         }
 
         if (line < y + h) put_line(line++, x, w, "", 1);
@@ -2048,6 +2151,24 @@ private:
             case 'S':
                 if (page_ == 2) {
                     sort_key_ = static_cast<SortKey>((static_cast<int>(sort_key_) + 1) % 8);
+                }
+                break;
+            case 'a':
+            case 'A':
+                if (page_ == 3) {
+                    channel_activity_range_ = ChannelActivityRange::All;
+                }
+                break;
+            case 'm':
+            case 'M':
+                if (page_ == 3) {
+                    channel_activity_range_ = ChannelActivityRange::Month;
+                }
+                break;
+            case 'w':
+            case 'W':
+                if (page_ == 3) {
+                    channel_activity_range_ = ChannelActivityRange::Week;
                 }
                 break;
             case 'r':

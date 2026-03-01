@@ -170,20 +170,58 @@ python tools/import_history.py *.json
 
 処理が完了すると、過去のメッセージ数に応じて各ユーザーに「3pt/msg」が加算され、会話内容もDBに保存されます。
 
-## CLIダッシュボード（試作）
+## CLIダッシュボード（C++ TUI & Python CLI）
 
-`system設計書2.md` の v2 指標（CP/TS/VP、カテゴリ分類、月間ランキング）に合わせたCLIダッシュボードです。
-現在のDBスキーマに無いテーブル（`votes`, `issues` など）は `operations` ページで `PENDING` として表示します。
+`system設計書2.md` の v2 指標（CP/TS/VP、カテゴリ分類、月間ランキング）に合わせたダッシュボードです。
 
-```bash
-python tools/dashboard_cli.py --section overview
-```
+> [!NOTE]
+> 現在は TUI（`comm0ns_cpp_tui` およびラッパーコマンドの `c0top`）をメイン運用としています。
+> 旧 `web` 実装は一旦撤去済みですが、将来的にアップデート版のWebダッシュボードを再実装する予定です。
 
-`htop` 風のページ分割TUIでも確認できます（9ページ）。
+### `c0top` コマンドの使い方（推奨）
 
-```bash
-python tools/dashboard_cli.py --tui
-```
+コミュニティメンバーが自身のPCからダッシュボードを確認するためのコマンドです。事前に `.env` 等の設定は不要です。
+
+1. **初回セットアップ**
+   リポジトリをcloneして、C++ TUIをビルド・Pythonの依存関係をインストールします。
+   ```bash
+   git clone https://github.com/Comm0ns-llc/discord_bot.git
+   cd discord_bot/comm0ns_cpp_tui
+   cmake --build build -j4
+   cd ..
+   pip install -r requirements.txt
+   ```
+
+2. **コマンドの実行**
+   ```bash
+   tools/c0top
+   ```
+   初回起動時は自動的にブラウザが立ち上がり、DiscordでのOAuth認証（連携承認）が求められます。認証完了後、ターミナルに戻るとTUI画面が起動します（次回以降は認証スキップ可能）。
+
+---
+
+### Python CLI版ダッシュボード（開発・検証用）
+
+TUIではなくログや特定のセクション出力を行いたい場合はPython版を利用できます。
+
+### TUIのDiscordログイン（初回のみ）
+
+`--tui` 起動時は Discord OAuth ログインを行います。
+
+1. 未ログイン時はブラウザが自動で開き、Discord認証画面に遷移
+2. 認証後、ブラウザに一瞬「認証成功。タブを閉じます...」と表示
+3. TUIへ戻ってDBデータをロード
+4. 次回以降は保存済みセッションを再利用（ブラウザは開かない）
+
+必要な設定:
+- Supabase Auth で `Discord` プロバイダを有効化
+- Supabase Auth の Redirect URL に `http://127.0.0.1:53682/auth/callback` を追加
+- `.env` に `SUPABASE_URL` と `SUPABASE_AUTH_KEY`（未設定なら `SUPABASE_KEY` を代用）
+
+補助オプション:
+- `--force-login`: 保存済みセッションを無視して再ログイン
+- `--auth-timeout`: OAuth待機タイムアウト秒数
+- `--skip-auth`: 認証をスキップ（ローカル検証用途）
 
 TUIキー操作:
 - `1-9` : ページ切替（Overview / MyStats / Leaderboard / Categories / Channels / Behavior / Graph / Governance / Operations）

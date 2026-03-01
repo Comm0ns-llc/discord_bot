@@ -2,15 +2,27 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import curses
+import hashlib
+import json
 import math
 import os
 import re
+import secrets
 import sys
+import threading
 import time
+import webbrowser
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from src.tui_auth import ensure_tui_auth_session
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
 from supabase import Client, create_client
@@ -102,6 +114,13 @@ DESIGN_TABLES = [
     "quests",
 ]
 
+    new_session = _perform_browser_login(supabase_url, apikey, timeout_sec)
+    user = _fetch_auth_user(supabase_url, apikey, new_session["access_token"])
+    if user:
+        new_session["user"] = user
+    _save_session(session_file, new_session)
+    return new_session
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -170,6 +189,22 @@ def parse_args() -> argparse.Namespace:
         "--tui",
         action="store_true",
         help="Run interactive TUI mode",
+    )
+    parser.add_argument(
+        "--skip-auth",
+        action="store_true",
+        help="Skip Discord OAuth login flow in TUI mode",
+    )
+    parser.add_argument(
+        "--force-login",
+        action="store_true",
+        help="Ignore saved auth session and force browser login in TUI mode",
+    )
+    parser.add_argument(
+        "--auth-timeout",
+        type=int,
+        default=_to_int(os.getenv("TUI_AUTH_TIMEOUT"), DEFAULT_AUTH_TIMEOUT),
+        help=f"OAuth callback timeout in seconds (default: {DEFAULT_AUTH_TIMEOUT})",
     )
     return parser.parse_args()
 
@@ -1273,6 +1308,22 @@ def run_non_tui(
 
 def main() -> None:
     args = parse_args()
+    if args.tui and not args.skip_auth:
+        try:
+            session = ensure_tui_auth_session(
+                force_login=bool(args.force_login),
+                timeout_sec=max(30, int(args.auth_timeout)),
+            )
+            user = session.get("user", {}) if isinstance(session.get("user"), dict) else {}
+            user_id = str(user.get("id") or "").strip()
+            email = str(user.get("email") or "").strip()
+            user_name = str((user.get("user_metadata") or {}).get("full_name") or "").strip()
+            display = email or user_name or user_id or "unknown user"
+            print(f"Authenticated: {display}")
+        except AuthError as exc:
+            print(f"Error: authentication failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+
     client = get_client(args.timeout)
 
     if args.tui:

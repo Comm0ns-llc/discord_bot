@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+import os
+import sys
+from pathlib import Path
+
+# Add the project root to sys.path so we can import src.tui_auth
+project_root = Path(__file__).parent.parent.resolve()
+sys.path.insert(0, str(project_root))
+
+from src.tui_auth import ensure_tui_auth_session, AuthError
+
+# =====================================================================
+# Configuration
+# Please fill in your Supabase project URL and Anon Key below.
+# These will be used to authenticate the C++ TUI without needing a .env file.
+# =====================================================================
+SUPABASE_URL = "https://qoahsyycabfohobvxrzg.supabase.co"
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFvYWhzeXljYWJmb2hvYnZ4cnpnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc4MDI3NzIsImV4cCI6MjA4MzM3ODc3Mn0.3TSx8SqJU7v7RmZb0Nhb29OQA2Nnmj2VH-Sp7l3NhEE"
+
+
+def main():
+    # Allow overriding via environment variables if users do have them set
+    url = os.environ.get("SUPABASE_URL", SUPABASE_URL)
+    key = os.environ.get("SUPABASE_ANON_KEY", SUPABASE_ANON_KEY)
+    
+    # If the user hasn't configured the script, try to see if they have a .env file locally as fallback
+    if "your-project.supabase.co" in url or "your_supabase_anon_key_here" in key:
+        from src.tui_auth import _load_dotenv_simple
+        _load_dotenv_simple()
+        url = os.environ.get("SUPABASE_URL", url)
+        # SUPABASE_ANON_KEY is best, but fallback to SUPABASE_AUTH_KEY or SUPABASE_KEY
+        key = (
+            os.environ.get("SUPABASE_ANON_KEY", "")
+            or os.environ.get("SUPABASE_AUTH_KEY", "")
+            or os.environ.get("SUPABASE_KEY", key)
+        )
+        
+        if "your-project.supabase.co" in url or "your_supabase_anon_key_here" in key:
+            print("Error: SUPABASE_URL or SUPABASE_ANON_KEY is not configured.", file=sys.stderr)
+            print(f"Please edit this script ({__file__}) and fill in the values.", file=sys.stderr)
+            sys.exit(1)
+
+    print("Checking Discord authentication...")
+    force_login = "--force-login" in sys.argv
+    try:
+        session = ensure_tui_auth_session(
+            force_login=force_login,
+            timeout_sec=180,
+            supabase_url=url,
+            supabase_key=key,
+        )
+        user = session.get("user", {})
+        user_name = user.get("user_metadata", {}).get("full_name") or user.get("email") or "User"
+        print(f"Authenticated successfully as {user_name}")
+    except AuthError as e:
+        print(f"Authentication error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print("\nAuthentication cancelled.")
+        sys.exit(130)
+
+    # Set the environment variables for the C++ application
+    # The C++ app currently reads SUPABASE_URL and SUPABASE_KEY from the environment
+    os.environ["SUPABASE_URL"] = url
+    os.environ["SUPABASE_KEY"] = key
+
+    # Path to the compiled C++ binary
+    tui_bin = project_root / "comm0ns_cpp_tui" / "build" / "comm0ns_tui"
+    if not tui_bin.exists():
+        print(f"Error: C++ TUI binary not found at {tui_bin}", file=sys.stderr)
+        print("Please build it first: cd comm0ns_cpp_tui && cmake --build build", file=sys.stderr)
+        sys.exit(1)
+
+    # Replace the current Python process with the C++ TUI
+    # This prevents Python from hanging around in memory while the C++ app runs
+    print("Launching Comm0ns TUI...")
+    os.execv(str(tui_bin), [str(tui_bin)])
+
+if __name__ == "__main__":
+    main()
